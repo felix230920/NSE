@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Share Market Studies</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            padding-left: 0;
+            padding-right: 0;
+            margin-left: 0;
+            margin-right: 0;
+        }
+        .chart-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0px;
+        }
+        .chart {
+            width: 100%;
+            padding: 0;
+            margin: 0;
+        }
+        .form-inline {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+        }
+        .form-inline label, .form-inline select, .form-inline button {
+            margin-right: 5px;
+        }
+        .custom-gray {
+            background-color: lightgray;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container mt-4">
+        <!-- Tab Navigation -->
+        <ul class="nav nav-tabs" id="myTab" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link active" id="historical-charts-tab" data-toggle="tab" href="#historical-charts" role="tab" aria-controls="historical-charts" aria-selected="true">Historical Charts</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="option-chain-tab" data-toggle="tab" href="#option-chain" role="tab" aria-controls="option-chain" aria-selected="false">Option Chain</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" id="historical-option-chain-tab" data-toggle="tab" href="#historical-option-chain" role="tab" aria-controls="historical-option-chain" aria-selected="false">Historical Option Chain</a>
+            </li>
+        </ul>
+
+        <!-- Tab Content -->
+        <div class="tab-content" id="myTabContent">
+            <!-- Historical Charts Tab -->
+            <div class="tab-pane fade show active" id="historical-charts" role="tabpanel" aria-labelledby="historical-charts-tab">
+                <form id="filter-form" class="form-inline">
+                    <label for="expiryDate">Expiry Date:</label>
+                    <select id="expiryDate" name="expiryDate" class="form-control">
+                        {% for expiry_date in unique_expiry_dates %}
+                            <option value="{{ expiry_date }}" {% if expiry_date == default_expiry_date %}selected{% endif %}>
+                                {{ expiry_date }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <label for="date">Date:</label>
+                    <select id="date" name="date" class="form-control">
+                        {% for date in unique_dates %}
+                            <option value="{{ date }}" {% if date == default_date %}selected{% endif %}>
+                                {{ date }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <label for="strikePrice">Strike Price:</label>
+                    <select id="strikePrice" name="strikePrice" class="form-control">
+                        <option value="All">All</option>
+                        {% for price in strike_prices %}
+                            <option value="{{ price }}">{{ price }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-primary">Update Charts</button>
+                </form>
+                <div class="chart-container mt-4">
+                    <div id="chart" class="chart"></div>
+                    <div id="ratio-chart" class="chart"></div>
+                    <div id="third-chart" class="chart"></div>
+                    <div id="fourth-chart" class="chart"></div>
+                </div>
+            </div>
+
+            <!-- Option Chain Tab -->
+            <div class="tab-pane fade" id="option-chain" role="tabpanel" aria-labelledby="option-chain-tab">
+                <div id="option-chain-table"></div>
+            </div>
+
+            <!-- Historical Option Chain Tab -->
+            <div class="tab-pane fade" id="historical-option-chain" role="tabpanel" aria-labelledby="historical-option-chain-tab">
+                <form id="historical-filter-form" class="form-inline">
+                    <label for="historical-expiryDate">Expiry Date:</label>
+                    <select id="historical-expiryDate" name="expiryDate" class="form-control">
+                        {% for expiry_date in unique_expiry_dates %}
+                            <option value="{{ expiry_date }}" {% if expiry_date == default_expiry_date %}selected{% endif %}>
+                                {{ expiry_date }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <label for="historical-date">Date:</label>
+                    <select id="historical-date" name="date" class="form-control"></select>
+                    <label for="historical-time">Time:</label>
+                    <select id="historical-time" name="time" class="form-control"></select>
+                    <button type="submit" class="btn btn-primary">Filter</button>
+                </form>
+                <div id="historical-option-chain-table" class="mt-4"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        $(document).ready(function () {
+            let autoRefreshInterval;
+
+            function fetchHistoricalDatesAndTimes() {
+            const expiryDate = $('#historical-expiryDate').val();
+            $.ajax({
+                url: '/get_historical_dates_and_times',
+                method: 'POST',
+                data: { expiryDate: expiryDate },
+                success: function (response) {
+                    // Populate the Date dropdown
+                    $('#historical-date').html('');
+                    response.dates.forEach(function (date) {
+                        $('#historical-date').append(`<option value="${date}" ${date === response.default_date ? 'selected' : ''}>${date}</option>`);
+                    });
+
+                    // Fetch times for the default or selected date
+                    fetchTimesForDate();
+                }
+            });
+        }
+
+        function fetchTimesForDate() {
+            const expiryDate = $('#historical-expiryDate').val();
+            const date = $('#historical-date').val();
+            $.ajax({
+                url: '/get_historical_dates_and_times',
+                method: 'POST',
+                data: { expiryDate: expiryDate, date: date },
+                success: function (response) {
+                    // Populate the Time dropdown
+                    $('#historical-time').html('');
+                    response.times.forEach(function (time) {
+                        $('#historical-time').append(`<option value="${time}" ${time === response.default_time ? 'selected' : ''}>${time}</option>`);
+                    });
+
+                    // Update the table after fetching times
+                    updateHistoricalOptionChainTable();
+                }
+            });
+        }
+
+        function updateHistoricalOptionChainTable() {
+            const expiryDate = $('#historical-expiryDate').val();
+            const date = $('#historical-date').val();
+            const time = $('#historical-time').val();
+
+            // Clear the table content immediately
+            $('#historical-option-chain-table').html('<p>Loading data...</p>');
+
+            $.ajax({
+                url: '/historical_option_chain',
+                method: 'POST',
+                data: { expiryDate: expiryDate, date: date, time: time },
+                success: function (response) {
+                    $('#historical-option-chain-table').html(response.html);
+
+                    // Use MutationObserver to ensure the table is fully rendered before applying styles
+                    const targetNode = document.querySelector('#historical-option-chain-table');
+                    const observer = new MutationObserver((mutationsList, observer) => {
+                        for (const mutation of mutationsList) {
+                            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                                // Apply styles and update headers
+                                styleTableCells('#historical-option-chain-table');
+                                $('#historical-option-chain-table table tbody tr td').each(function () {
+                                    const cellValue = $(this).text().trim();
+                                    if (!isNaN(cellValue) && cellValue.includes('.')) { // Check if the value is a float
+                                        $(this).text(parseFloat(cellValue).toFixed(2));
+                                    }
+                                });
+
+                                // Disconnect the observer after applying styles
+                                observer.disconnect();
+                            }
+                        }
+                    });
+
+                    // Start observing the target node for changes
+                    observer.observe(targetNode, { childList: true, subtree: true });
+
+                        const timevalue = response.time_value_str || 'N/A';
+                        const expirydate = response.expiry_date_value_str || 'N/A';
+                        const date = response.date_value_str || 'N/A';
+                        const dateObject = new Date(date);
+                        const dayOfWeek = dateObject.toLocaleDateString('en-US', { weekday: 'long' });
+                        const resistance = response.ce_strike_price || 'N/A';
+                        const support = response.pe_strike_price || 'N/A';
+                        const risky_top = response.strike_price_plus_25 || 'N/A';
+                        const safe_top = response.strike_price_plus_75 || 'N/A';
+                        const risky_bottom = response.strike_price_minus_25 || 'N/A';
+                        const safe_bottom = response.strike_price_minus_75 || 'N/A';
+                        const formattedRiskyTop = !isNaN(risky_top) ? new Intl.NumberFormat('en-US').format(risky_top) : risky_top;
+                        const formattedSafeTop = !isNaN(safe_top) ? new Intl.NumberFormat('en-US').format(safe_top) : safe_top;
+                        const formattedRiskyBottom = !isNaN(risky_bottom) ? new Intl.NumberFormat('en-US').format(risky_bottom) : risky_bottom;
+                        const formattedSafeBottom = !isNaN(safe_bottom) ? new Intl.NumberFormat('en-US').format(safe_bottom) : safe_bottom;
+
+                        // Add two styled rows above the headers
+                        const table = $('#historical-option-chain-table table');
+                        const headerRow = table.find('thead tr').first(); // Find the first header row
+                        if (headerRow.length > 0) {
+                            const columnCount = headerRow.children('th').length; // Get the number of columns
+
+                             // Create the first blank row
+                             const styledRow1 = `
+                                <tr style="height: 20px;">
+                                    <td></td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2">Expiry Date :</td> 
+                                    <td><strong>${expirydate}</strong></td> 
+                                    <td></td>
+                                    <td>Date :</td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2"><strong>${date}</strong></td>  
+                                    <td><strong>${dayOfWeek}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2">Current Range :</td>
+                                    <td>Resistance</td>
+                                    <td><strong>${resistance}</strong></td>
+                                    <td>Support</td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2">
+                                        <strong>${support}</strong>
+                                    </td>
+                                </tr>
+                            `;
+
+                            // Create the second styled row
+                            const styledRow2 = `
+                                <tr style="height: 20px;">
+                                    <td></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>RISKY TOP</strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>${formattedRiskyTop}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>SAFE TOP</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;" colspan="2">
+                                        <strong>${formattedSafeTop}</strong>
+                                    </td>
+                                    <td rowspan="2"><strong>${timevalue}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>RISKY BOTTOM</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>${formattedRiskyBottom}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>SAFE BOTTOM</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;" colspan="2">
+                                        <strong>${formattedSafeBottom}</strong>
+                                    </td>
+                                </tr>
+                            `;
+
+                            // Create the second blank row
+                            const styledRow3 = `
+                                <tr style="height: 20px;">
+                                    <td></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>  
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                </tr>
+                            `;
+
+                            // Prepend the styled rows to the table header
+                            headerRow.before(styledRow1);
+                            headerRow.before(styledRow2);
+                            headerRow.before(styledRow3);
+                        }
+
+                        styleOptionChainTable('#historical-option-chain-table');
+
+                        // Update headers after the table is rendered
+                        updateTableHeaders('#historical-option-chain-table');
+                        
+
+                        // Fetch the underlying value from the response
+                        const underlyingValue = response.underlying_value || 'N/A';
+                        const ce_oi = response.ce_open_interest_result || 'N/A';
+                        const ce_volume = response.ce_total_traded_volume_result || 'N/A';
+                        const pe_oi = response.pe_open_interest_result || 'N/A';
+                        const pe_volume = response.pe_total_traded_volume_result || 'N/A';
+
+                        // Add two rows with different values after the 10th data row
+                        const rows = table.find('tbody tr'); // Only target rows in the <tbody> section
+                        if (rows.length > 10) {
+                            const blankRow1 = `
+                                <tr style="border-bottom: 5px solid orange;">
+                                    <td></td>
+                                    <td></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${ce_oi}</strong></td>
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${ce_volume}</strong></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle;color: blue;"><strong>${underlyingValue}</strong></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${pe_volume}</strong></td>
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${pe_oi}</strong></td>
+                                    <td></td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            `;
+                            
+                            const blankRow2 = `
+                                <tr>
+                                    <td></td>
+                                    <td></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            `;
+                            
+                            $(rows[9]).after(blankRow1 + blankRow2); // Insert the two distinct rows after the 10th data row
+                        }  
+                },
+                error: function () {
+                    $('#historical-option-chain-table').html('<p>Error loading historical option chain data.</p>');
+                }
+            });
+        }
+
+
+    
+            function fetchDatesAndStrikePrices() {
+                var expiryDate = $('#expiryDate').val();
+                $.ajax({
+                    url: '/get_dates_and_strike_prices',
+                    method: 'POST',
+                    data: { expiryDate: expiryDate },
+                    success: function (response) {
+                        $('#date').html('');
+                        response.dates.forEach(function (date) {
+                            $('#date').append(`<option value="${date}" ${date === response.default_date ? 'selected' : ''}>${date}</option>`);
+                        });
+    
+                        $('#strikePrice').html('<option value="All">All</option>');
+                        response.strike_prices.forEach(function (price) {
+                            $('#strikePrice').append(`<option value="${price}">${price}</option>`);
+                        });
+    
+                        updateCharts();
+                    }
+                });
+            }
+    
+            function fetchStrikePrices() {
+                var expiryDate = $('#expiryDate').val();
+                var date = $('#date').val();
+                $.ajax({
+                    url: '/get_dates_and_strike_prices',
+                    method: 'POST',
+                    data: { expiryDate: expiryDate, date: date },
+                    success: function (response) {
+                        $('#strikePrice').html('<option value="All">All</option>');
+                        response.strike_prices.forEach(function (price) {
+                            $('#strikePrice').append(`<option value="${price}">${price}</option>`);
+                        });
+    
+                        updateCharts();
+                    }
+                });
+            }
+    
+            function updateCharts() {
+                var expiryDate = $('#expiryDate').val();
+                var date = $('#date').val();
+                var strikePrice = $('#strikePrice').val();
+    
+                $.ajax({
+                    url: '/update_all_charts',
+                    method: 'POST',
+                    data: { expiryDate: expiryDate, date: date, strikePrice: strikePrice },
+                    success: function (response) {
+                        $('#chart').html(response.chart);
+                        $('#ratio-chart').html(response.ratio_chart);
+                        $('#third-chart').html(response.third_chart);
+                        $('#fourth-chart').html(response.fourth_chart);
+                    }
+                });
+            }
+    
+            function isDefaultSelected() {
+                const expiryDate = $('#expiryDate').val();
+                const date = $('#date').val();
+                const strikePrice = $('#strikePrice').val();
+    
+                const defaultExpiryDate = $('#expiryDate option:first').val();
+                const defaultDate = $('#date option:first').val();
+    
+                return expiryDate === defaultExpiryDate && date === defaultDate && strikePrice === 'All';
+            }
+    
+            function startAutoRefresh() {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                }
+    
+                if (isDefaultSelected()) {
+                    autoRefreshInterval = setInterval(updateCharts, 10000); // Auto-refresh every 10 seconds
+                }
+            }
+
+            function styleTableCells(tableSelector) {
+                // Target the table rows and cells
+                $(`${tableSelector} table tbody tr`).each(function () {
+                    $(this).find('td').each(function (index) {
+                        // Define the column indices for the specific columns
+                        const targetColumns = [1, 5, 9, 13];
+
+                        if (targetColumns.includes(index)) {
+                            const cellValue = parseFloat($(this).text().trim()); // Parse the cell value as a float
+                            if (!isNaN(cellValue)) { // Check if the value is a valid number
+                                if (cellValue > 0) {
+                                    $(this).css('color', 'limegreen'); // Positive value
+                                } else if (cellValue < 0) {
+                                    $(this).css('color', 'red'); // Negative value
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+    
+            function updateTableHeaders(tableSelector) {
+                const columnMapping = {
+                    "CE_impliedVolatility": "IV",
+                    "CE_pchangeinOpenInterest": "PC OI",
+                    "CE_changeinOpenInterest": "OI Chg",
+                    "CE_openInterest": "OI",
+                    "CE_totalTradedVolume": "Volume",
+                    "CE_change": "Chg (Pts)",
+                    "CE_lastPrice": "LTP",
+                    "PE_lastPrice": "LTP",
+                    "strikePrice": "Strike Price",
+                    "PE_change": "Chg (Pts)",
+                    "PE_totalTradedVolume": "Volume",
+                    "PE_openInterest": "OI",
+                    "PE_changeinOpenInterest": "OI Chg",
+                    "PE_pchangeinOpenInterest": "PC OI",
+                    "PE_impliedVolatility": "IV"
+                };
+    
+                // Find the table headers and update their text
+                $(`${tableSelector} th`).each(function () {
+                    const originalText = $(this).text().trim();
+                    if (columnMapping[originalText]) {
+                        $(this).text(columnMapping[originalText]);
+                    }
+                });
+            }
+
+            function styleOptionChainTable(tableSelector) {
+                const table = document.querySelector(`${tableSelector} table`);
+                if (!table) return; // Exit if the table is not found
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach((row, rowIndex) => {
+                    const cells = row.querySelectorAll('td'); 
+                    // Apply lightgray background to the first 7 columns and first 10 rows
+                    if (rowIndex < 10) {
+                        cells.forEach((cell, colIndex) => {
+                            if (colIndex < 7) {
+                                cell.classList.add('custom-gray');
+                            }
+                        });
+                    }
+                    // Apply lightgray background to columns 9 to 15 and rows 11 to 20
+                    if (rowIndex >= 10 && rowIndex < 20) {
+                        cells.forEach((cell, colIndex) => {
+                            if (colIndex >= 8 && colIndex < 15) {
+                                cell.classList.add('custom-gray');
+                            }
+                        });
+                    }
+                });
+            }
+
+            let optionChainRefreshInterval;
+            function updateOptionChainTable() {
+                $.ajax({
+                    url: '/option_chain',
+                    method: 'GET',
+                    success: function (response) {
+                        // Update the table HTML
+                        $('#option-chain-table').html(response.html);
+
+                        styleTableCells('#option-chain-table');
+
+                        // Format all float cells to 2 decimal places
+                        $('#option-chain-table table tbody tr td').each(function () {
+                            const cellValue = $(this).text().trim();
+                            if (!isNaN(cellValue) && cellValue.includes('.')) { // Check if the value is a float
+                                $(this).text(parseFloat(cellValue).toFixed(2));
+                            }
+                        });
+
+                        const timevalue = response.time_value_str || 'N/A';
+                        const expirydate = response.expiry_date_value_str || 'N/A';
+                        const date = response.date_value_str || 'N/A';
+                        const dateObject = new Date(date);
+                        const dayOfWeek = dateObject.toLocaleDateString('en-US', { weekday: 'long' });
+                        const resistance = response.ce_strike_price || 'N/A';
+                        const support = response.pe_strike_price || 'N/A';
+                        const risky_top = response.strike_price_plus_25 || 'N/A';
+                        const safe_top = response.strike_price_plus_75 || 'N/A';
+                        const risky_bottom = response.strike_price_minus_25 || 'N/A';
+                        const safe_bottom = response.strike_price_minus_75 || 'N/A';
+                        const formattedRiskyTop = !isNaN(risky_top) ? new Intl.NumberFormat('en-US').format(risky_top) : risky_top;
+                        const formattedSafeTop = !isNaN(safe_top) ? new Intl.NumberFormat('en-US').format(safe_top) : safe_top;
+                        const formattedRiskyBottom = !isNaN(risky_bottom) ? new Intl.NumberFormat('en-US').format(risky_bottom) : risky_bottom;
+                        const formattedSafeBottom = !isNaN(safe_bottom) ? new Intl.NumberFormat('en-US').format(safe_bottom) : safe_bottom;
+
+                        // Add two styled rows above the headers
+                        const table = $('#option-chain-table table');
+                        const headerRow = table.find('thead tr').first(); // Find the first header row
+                        if (headerRow.length > 0) {
+                            const columnCount = headerRow.children('th').length; // Get the number of columns
+
+                             // Create the first blank row
+                             const styledRow1 = `
+                                <tr style="height: 20px;">
+                                    <td></td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2">Expiry Date :</td> 
+                                    <td><strong>${expirydate}</strong></td> 
+                                    <td></td>
+                                    <td>Date :</td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2"><strong>${date}</strong></td>  
+                                    <td><strong>${dayOfWeek}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2">Current Range :</td>
+                                    <td>Resistance</td>
+                                    <td><strong>${resistance}</strong></td>
+                                    <td>Support</td>
+                                    <td style="text-align: center; vertical-align: middle;" colspan="2">
+                                        <strong>${support}</strong>
+                                    </td>
+                                </tr>
+                            `;
+
+                            // Create the second styled row
+                            const styledRow2 = `
+                                <tr style="height: 20px;">
+                                    <td></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>RISKY TOP</strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>${formattedRiskyTop}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>SAFE TOP</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;" colspan="2">
+                                        <strong>${formattedSafeTop}</strong>
+                                    </td>
+                                    <td rowspan="2"><strong>${timevalue}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>RISKY BOTTOM</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>${formattedRiskyBottom}</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;"><strong>SAFE BOTTOM</strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: black; color: white;" colspan="2">
+                                        <strong>${formattedSafeBottom}</strong>
+                                    </td>
+                                </tr>
+                            `;
+
+                            // Create the second blank row
+                            const styledRow3 = `
+                                <tr style="height: 20px;">
+                                    <td></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: limegreen; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>  
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td> 
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                    <td style="text-align: center; vertical-align: middle; background-color: red; color: white;"><strong></strong></td>
+                                </tr>
+                            `;
+
+                            // Prepend the styled rows to the table header
+                            headerRow.before(styledRow1);
+                            headerRow.before(styledRow2);
+                            headerRow.before(styledRow3);
+                        }
+
+                        styleOptionChainTable('#option-chain-table');
+
+                        // Update headers after the table is rendered
+                        updateTableHeaders('#option-chain-table');
+                        
+
+                        // Fetch the underlying value from the response
+                        const underlyingValue = response.underlying_value || 'N/A';
+                        const ce_oi = response.ce_open_interest_result || 'N/A';
+                        const ce_volume = response.ce_total_traded_volume_result || 'N/A';
+                        const pe_oi = response.pe_open_interest_result || 'N/A';
+                        const pe_volume = response.pe_total_traded_volume_result || 'N/A';
+
+                        // Add two rows with different values after the 10th data row
+                        const rows = table.find('tbody tr'); // Only target rows in the <tbody> section
+                        if (rows.length > 10) {
+                            const blankRow1 = `
+                                <tr style="border-bottom: 5px solid orange;">
+                                    <td></td>
+                                    <td></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${ce_oi}</strong></td>
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${ce_volume}</strong></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle;color: blue;"><strong>${underlyingValue}</strong></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${pe_volume}</strong></td>
+                                    <td rowspan="2" style="text-align: center; vertical-align: middle; background-color: black; color: white; border: 1px solid white;"><strong>${pe_oi}</strong></td>
+                                    <td></td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            `;
+                            
+                            const blankRow2 = `
+                                <tr>
+                                    <td></td>
+                                    <td></td>
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td> 
+                                    <td></td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            `;
+                            
+                            $(rows[9]).after(blankRow1 + blankRow2); // Insert the two distinct rows after the 10th data row
+                        }
+
+                        // Check if the time is greater than or equal to 03:30:00 pm
+                    if (timevalue !== 'N/A') {
+                        const [hours, minutes, seconds] = timevalue.split(':');
+                        const timeInMinutes = parseInt(hours) * 60 + parseInt(minutes);
+
+                        // 03:30:00 pm in minutes is 15 * 60 + 30 = 930
+                        if (timeInMinutes >= 930) {
+                            if (optionChainRefreshInterval) {
+                                clearInterval(optionChainRefreshInterval);
+                                optionChainRefreshInterval = null;
+                            }
+                            return; // Stop further execution
+                        }
+                    }
+                    },
+                    error: function () {
+                        $('#option-chain-table').html('<p>Error loading option chain data.</p>');
+                    }
+                });
+            }
+
+            function startOptionChainAutoRefresh() {
+                if (optionChainRefreshInterval) {
+                    clearInterval(optionChainRefreshInterval);
+                }
+                optionChainRefreshInterval = setInterval(updateOptionChainTable, 10000);
+            }
+    
+            $('#expiryDate').change(function () {
+                fetchDatesAndStrikePrices();
+                startAutoRefresh();
+            });
+
+            $('#date').change(function () {
+                fetchStrikePrices();
+                startAutoRefresh();
+            });
+
+            $('#filter-form').on('submit', function (event) {
+                event.preventDefault();
+                updateCharts();
+            });
+
+            $('#historical-option-chain-tab').on('click', function () {
+                fetchHistoricalDatesAndTimes();
+            });
+
+            // Event listeners for dropdown changes
+            $('#historical-expiryDate').on('change', function () {
+                fetchHistoricalDatesAndTimes(); // Fetch dates and times when expiry date changes
+                updateHistoricalOptionChainTable(); // Update the table immediately
+            });
+
+            $('#historical-date').on('change', function () {
+                fetchTimesForDate(); // Fetch times when the date changes
+                updateHistoricalOptionChainTable(); // Update the table immediately
+            });
+
+            $('#historical-time').on('change', function () {
+                updateHistoricalOptionChainTable(); // Update the table when the time changes
+            });
+
+            fetchDatesAndStrikePrices();
+            startAutoRefresh();
+            updateOptionChainTable();
+            startOptionChainAutoRefresh();
+        });
+    </script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+
+</html>
